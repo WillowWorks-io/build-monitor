@@ -1,0 +1,31 @@
+# Copy to config.yaml and edit. config.yaml is gitignored.
+
+# Where to read the CircleCI personal API token. Point this at wherever
+# you already keep it. The token is read from disk at startup, is never
+# written to the repo, and never reaches the browser.
+token_file: ~/.config/circleci/token
+
+# Address the radiator is served on.
+listen: 127.0.0.1:8770
+
+# How often to poll CircleCI. Each cycle costs roughly
+# (1 + projects) requests per org, so keep this at 30s or higher.
+poll_interval: 60s
+
+# Which branches count. "*" shows the latest pipeline per project on any
+# branch (what the CircleCI "All" tab shows). The default of just the
+# repo's default branch is the classic build-monitor semantic: it answers
+# "is trunk green?" without feature-branch noise.
+branch_filter: default
+
+# Projects matching these patterns are hidden. Shell-style globs,
+# matched against "org/project".
+exclude:
+  - "*/archived-*"
+
+# CircleCI org slugs. "gh/<org>" for GitHub, "bb/<org>" for Bitbucket.
+# List as many as you like; each is polled concurrently.
+orgs:
+  - gh/vibrant-wozniak
+  - gh/nostalgic-hopper
+  - gh/eager-lovelace

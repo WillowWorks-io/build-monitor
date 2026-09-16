@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Build Monitor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="bar">
+    <div class="tally" id="tally"></div>
+    <div class="meta">
+      <span id="conn" class="conn"></span>
+      <span id="clock" class="clock"></span>
+    </div>
+  </header>
+
+  <main id="board" class="board"></main>
+
+  <div id="empty" class="empty" hidden>
+    <p class="empty-title">No projects yet</p>
+    <p class="empty-sub">Waiting for the first poll to come back.</p>
+  </div>
+
+  <footer id="errors" class="errors" hidden></footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
