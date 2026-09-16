@@ -4,8 +4,8 @@ A CircleCI build radiator: one page, readable from across the room, that
 replaces a browser tab per org.
 
 Five CircleCI "All pipelines" tabs cost about 1.6 GB of Chrome. This
-serves the same information from a single Go process holding roughly
-15 MB, in one tab you can throw on a spare display and stop thinking
+serves the same information from a single Go process holding around
+22 MB, in one tab you can throw on a spare display and stop thinking
 about.
 
 <img src="docs/screenshot.jpg" alt="The board: fifteen green tiles and one red, showing how long it has been broken" width="100%">
@@ -14,19 +14,67 @@ about.
 
 It is a *radiator*, not a dashboard. Colour carries the signal and text
 is secondary: failures sort to the top-left where the eye lands, a
-running build breathes so motion rather than reading tells you it is
-live, and tile sizes scale with the viewport so the board fills whatever
-display it lands on.
+running build spins and pulses so motion rather than reading tells you it
+is live, and tile sizes scale with the viewport so the board fills
+whatever display it lands on.
 
 The CircleCI token is read from disk by the server and never reaches the
 browser. The page talks only to `localhost`.
 
-## Running it
+## Quick start
 
-    cp config.example.yaml config.yaml   # edit orgs, then:
+Needs **Go 1.27 or newer** (`go version` to check) and a CircleCI
+account.
+
+**1. Get a CircleCI API token.** Create a Personal API Token at
+[app.circleci.com/settings/user/tokens](https://app.circleci.com/settings/user/tokens),
+then put it somewhere the server can read:
+
+    mkdir -p ~/.config/circleci
+    printf '%s' 'YOUR_TOKEN_HERE' > ~/.config/circleci/token
+    chmod 600 ~/.config/circleci/token
+
+The token is read from disk by the server at startup. It never reaches
+the browser and never goes in the repo.
+
+**2. Write a config.**
+
+    cp config.example.yaml config.yaml
+
+`config.yaml` is gitignored. A minimal one is just:
+
+```yaml
+token_file: ~/.config/circleci/token
+orgs:
+  - gh/your-github-org
+```
+
+Your org slug is `gh/` plus your GitHub org or username -- the same name
+that appears in a CircleCI pipeline URL,
+`app.circleci.com/pipelines/github/<this-part>/…`. Use `bb/` for
+Bitbucket. List as many orgs as you like; each is polled concurrently.
+
+**3. Run it.**
+
     go run ./cmd/build-monitor -config config.yaml
 
-Open <http://127.0.0.1:8770>.
+Open <http://127.0.0.1:8770>. Or install it on your `PATH`:
+
+    go install github.com/willowworks-io/build-monitor/cmd/build-monitor@latest
+
+### Nothing on the board?
+
+Errors are shown in a red strip along the bottom of the board rather
+than hidden in the log, so most of these announce themselves.
+
+| What you see | Usually means |
+| --- | --- |
+| `circleci returned HTTP 404` | The org slug is wrong, or your token cannot see that org. Check it against a CircleCI pipeline URL. |
+| `circleci rejected the token` | The token is wrong, revoked, or the file holds something other than the token. |
+| `read token: no such file` at startup | `token_file` points somewhere that does not exist. The server refuses to start rather than polling unauthenticated. |
+| Empty board, no errors | The orgs are reachable but have no pipelines the filter admits. Try `branch_filter: "*"`. |
+| A project you expected is missing | It has never run a pipeline. A radiator can only show builds that exist. |
+| Fewer projects than you expected | `branch_filter: default` hides runs that were not on the repo's default branch. Set it to `"*"` to see everything. |
 
 ### Configuration
 
@@ -114,11 +162,16 @@ the board rather than filtered out, with branch shown as `?`.
 
 ## Running it as a background service
 
+On macOS, via launchd:
+
     cp deploy/io.willowworks.build-monitor.plist ~/Library/LaunchAgents/
     # edit the paths inside, then:
     launchctl load ~/Library/LaunchAgents/io.willowworks.build-monitor.plist
 
 Logs land in `/tmp/build-monitor.{log,err}`.
+
+On Linux the equivalent is a systemd user unit running the same binary
+with the same `-config` flag; there is no unit file in the repo yet.
 
 ## Tests
 
