@@ -49,6 +49,17 @@ not just mapping it.
 local server. Keep it that way — do not proxy CircleCI responses
 verbatim if they would ever carry credentials.
 
+**The favicon is generated, not just served.** `static/favicon.svg` is
+the static fallback; `paintFavicon()` rebuilds the mark as a data URI on
+each render so the tab reflects board state. Keep the two in visual sync
+if the mark changes.
+
+**The logo carries its own theme switch.** `docs/logo.svg` sets the
+wordmark via an embedded `prefers-color-scheme` block, because an SVG
+loaded through `<img>` is style-isolated from the page around it and
+GitHub renders READMEs in both themes. Light is the default branch so a
+viewer reporting no preference still reads.
+
 ## Conventions
 
 - `gofmt` and `go vet` clean before committing.

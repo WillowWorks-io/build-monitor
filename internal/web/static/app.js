@@ -80,6 +80,9 @@ function render(data) {
     `<span class="t-passed"><b>${c.passed || 0}</b><span>passed</span></span>`,
   ].join("");
 
+  paintFavicon(data.counts);
+  paintTitle(data.counts);
+
   board.style.setProperty("--cols", columnsFor(projects.length));
   board.classList.toggle("has-failure", (c.failed || 0) > 0);
 
@@ -240,3 +243,63 @@ addEventListener("resize", () => {
 poll();
 setInterval(poll, POLL_MS);
 setInterval(paintFreshness, 1000);
+
+// --- live favicon ---------------------------------------------------
+// The tab strip is the smallest possible radiator. Repainting the icon
+// to match the board means a backgrounded tab still reports the build,
+// which is most of the time a monitor spends.
+
+const FAVICON_INK = {
+  failed: "#e0483d",
+  running: "#2f6fd0",
+  on_hold: "#c78b16",
+  unknown: "#5a6675",
+  passed: "#22a55c",
+};
+
+function faviconFor(counts) {
+  // The odd tile takes the worst live state; everything else stays
+  // green, so the mark's identity holds and only its news changes.
+  const worst = counts.failed ? "failed"
+    : counts.running ? "running"
+    : counts.on_hold ? "on_hold"
+    : counts.unknown ? "unknown"
+    : "passed";
+  const odd = FAVICON_INK[worst];
+  const rest = FAVICON_INK.passed;
+  const tile = (x, y, fill) =>
+    `<rect x="${x}" y="${y}" width="10" height="10" rx="2.4" fill="${fill}"/>`;
+  return "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">` +
+    `<rect width="32" height="32" rx="7" fill="#0b0e13"/>` +
+    tile(5, 5, odd) + tile(17, 5, rest) +
+    tile(5, 17, rest) + tile(17, 17, rest) +
+    `</svg>`);
+}
+
+let lastFavicon = "";
+
+function paintFavicon(counts) {
+  const href = faviconFor(counts || {});
+  if (href === lastFavicon) return; // avoid pointless DOM churn every poll
+  lastFavicon = href;
+  let link = document.querySelector("link[rel='icon']");
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "icon";
+    document.head.append(link);
+  }
+  link.type = "image/svg+xml";
+  link.href = href;
+}
+
+function paintTitle(counts) {
+  const c = counts || {};
+  // Failures belong in the tab title too: a truncated tab still shows
+  // its first few characters.
+  document.title = c.failed
+    ? `(${c.failed}) FAILED — Build Monitor`
+    : c.running
+      ? `(${c.running}) running — Build Monitor`
+      : "Build Monitor";
+}

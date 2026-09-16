@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Build Monitor">
+  <rect width="32" height="32" rx="7" fill="#0b0e13"/>
+  <g>
+    <rect x="5"    y="5"    width="10" height="10" rx="2.4" fill="#e0483d"/>
+    <rect x="17"   y="5"    width="10" height="10" rx="2.4" fill="#22a55c"/>
+    <rect x="5"    y="17"   width="10" height="10" rx="2.4" fill="#22a55c"/>
+    <rect x="17"   y="17"   width="10" height="10" rx="2.4" fill="#22a55c"/>
+  </g>
+</svg>

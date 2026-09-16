@@ -1,4 +1,4 @@
-# build-monitor
+<img src="docs/logo.svg" alt="Build Monitor" width="300">
 
 A CircleCI build radiator: one page, readable from across the room, that
 replaces a browser tab per org.
@@ -52,6 +52,11 @@ Each tile carries more than a colour:
 | Broken for | Red tiles show how long they have been red and over how many builds. "Just broke" and "broken for a month" deserve different reactions. |
 | Duration | How long the last run actually took, so a suite getting slower is visible. |
 | Hatching | On-hold tiles are striped as well as recoloured, after Concourse -- texture reads as "deliberately not running". |
+
+The tab icon tracks the board: the odd tile in the mark takes the worst
+live state, and the title carries a failure count. The tab strip is the
+smallest radiator there is, and a backgrounded tab is where a monitor
+spends most of its time.
 
 ### Keyboard
 
