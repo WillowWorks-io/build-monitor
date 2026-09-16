@@ -8,6 +8,8 @@ serves the same information from a single Go process holding roughly
 15 MB, in one tab you can throw on a spare display and stop thinking
 about.
 
+<img src="docs/screenshot.jpg" alt="The board: fifteen green tiles and one red, showing how long it has been broken" width="100%">
+
 ## Design
 
 It is a *radiator*, not a dashboard. Colour carries the signal and text

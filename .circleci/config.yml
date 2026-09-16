@@ -1,0 +1,90 @@
+version: 2.1
+
+# There is deliberately no setup pipeline and no deploy job here.
+#
+# This repo produces a binary someone runs on their own machine; there is
+# no environment for CI to push to, so the whole pipeline is "does it
+# still build and behave". That makes a single static config the honest
+# shape -- the dynamic-config dispatch the deploying repos in this fleet
+# use would be machinery guarding a decision that never has to be made.
+#
+# The checks run as separate jobs rather than steps in one, so a failure
+# names itself in the CircleCI UI: "vet" failing and "test" failing are
+# different problems and should not share a red square.
+
+jobs:
+  # gofmt is checked rather than applied. CI that rewrites your source is
+  # a surprise; CI that tells you it is unformatted is a reminder.
+  format:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - run:
+          name: gofmt
+          command: |
+            unformatted=$(gofmt -l ./cmd ./internal)
+            if [ -n "$unformatted" ]; then
+              echo "These files need gofmt:"
+              echo "$unformatted"
+              exit 1
+            fi
+            echo "all files formatted"
+
+  vet:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - go-mod-v1-{{ checksum "go.sum" }}
+      - run:
+          name: go vet
+          command: go vet ./...
+      - save_cache:
+          key: go-mod-v1-{{ checksum "go.sum" }}
+          paths:
+            - /home/circleci/go/pkg/mod
+
+  # -race matters more than it looks: the board is read by HTTP handlers
+  # while the poller writes it, and the duration cache is touched from
+  # several goroutines at once.
+  test:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - go-mod-v1-{{ checksum "go.sum" }}
+      - run:
+          name: go test -race
+          command: go test -race -cover ./...
+
+  # Builds the real binary, which also proves the go:embed of the static
+  # assets still resolves -- a missing file there fails the compile
+  # rather than the tests.
+  build:
+    docker:
+      - image: cimg/go:1.27
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - go-mod-v1-{{ checksum "go.sum" }}
+      - run:
+          name: go build
+          command: go build -o build-monitor ./cmd/build-monitor
+      - run:
+          name: binary runs
+          command: ./build-monitor -config /nonexistent.yaml 2>&1 | grep -q 'read config' && echo "starts and reports a missing config"
+
+workflows:
+  check:
+    jobs:
+      - format
+      - vet
+      - test
+      - build:
+          requires: [test]
