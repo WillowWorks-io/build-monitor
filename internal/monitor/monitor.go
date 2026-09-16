@@ -248,10 +248,15 @@ func (m *Monitor) pollOrg(ctx context.Context, org string) ([]Project, error) {
 		return nil, err
 	}
 
+	// Two forms of the same org: the bare name is what exclude patterns
+	// match against, and the host-qualified name is what tiles display.
+	// Qualifying the matched form would add a path segment and silently
+	// stop every configured "*/pattern" from matching.
 	orgName := org
 	if _, after, ok := strings.Cut(org, "/"); ok {
 		orgName = after
 	}
+	orgLabel := qualifiedOrg(org)
 
 	// Keep only the newest qualifying pipeline per project. The API
 	// returns newest first, so the first sighting wins.
@@ -293,7 +298,7 @@ func (m *Monitor) pollOrg(ctx context.Context, org string) ([]Project, error) {
 				errs = append(errs, err.Error())
 				return
 			}
-			out = append(out, tile(orgName, name, p, wfs))
+			out = append(out, tile(orgLabel, name, p, wfs))
 		}(name, latest[name])
 	}
 	wg.Wait()
@@ -530,23 +535,53 @@ func (m *Monitor) enrich(ctx context.Context, projects []Project) []Project {
 // excluding approval gates -- and lock/unlock jobs, which serialise
 // deploys and are likewise waiting rather than working.
 func (m *Monitor) buildSeconds(ctx context.Context, workflowIDs []string) (int, bool) {
-	total := 0
-	any := false
+	var all []circleci.Job
 	for _, id := range workflowIDs {
 		jobs, err := m.client.ListWorkflowJobs(ctx, id)
 		if err != nil {
 			return 0, false
 		}
-		for _, j := range jobs {
-			switch j.Type {
-			case "approval", "lock", "unlock":
-				continue
-			}
-			if secs := j.RunSeconds(); secs > 0 {
-				total += secs
-				any = true
-			}
+		all = append(all, jobs...)
+	}
+	return sumBuildSeconds(all)
+}
+
+// sumBuildSeconds totals the time jobs spent actually running. Approval
+// gates are a human deciding, and lock/unlock jobs serialise deploys --
+// all three are waiting, not working, and counting them is what makes a
+// pipeline someone approved the next morning look like a seven-hour
+// build.
+func sumBuildSeconds(jobs []circleci.Job) (int, bool) {
+	total := 0
+	any := false
+	for _, j := range jobs {
+		switch j.Type {
+		case "approval", "lock", "unlock":
+			continue
+		}
+		if secs := j.RunSeconds(); secs > 0 {
+			total += secs
+			any = true
 		}
 	}
 	return total, any
+}
+
+// qualifiedOrg turns a CircleCI org slug into its host-qualified form,
+// so a tile reads "github.com/acme" rather than a bare "ACME" that says
+// nothing about where the code lives. Slugs CircleCI may add later pass
+// through unchanged rather than being guessed at.
+func qualifiedOrg(slug string) string {
+	prefix, rest, ok := strings.Cut(slug, "/")
+	if !ok || rest == "" {
+		return slug
+	}
+	switch prefix {
+	case "gh", "github":
+		return "github.com/" + rest
+	case "bb", "bitbucket":
+		return "bitbucket.org/" + rest
+	default:
+		return slug
+	}
 }

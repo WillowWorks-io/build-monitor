@@ -174,10 +174,12 @@ body {
 }
 
 .tile-org {
-  font-size: clamp(9px, 0.8vw, 14px);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  opacity: 0.72;
+  /* Monospace and lower case, so a qualified org reads like a module
+     path rather than a shouted label. */
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(9px, 0.78vw, 13px);
+  letter-spacing: 0.01em;
+  opacity: 0.66;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

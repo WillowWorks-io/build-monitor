@@ -34,7 +34,7 @@ Open <http://127.0.0.1:8770>.
 | `listen` | Address to serve on. Keep it on loopback. |
 | `poll_interval` | How often to poll CircleCI. Floor of 15s. |
 | `branch_filter` | `default` watches each repo's default branch; `*` watches every branch, like CircleCI's "All" tab. |
-| `exclude` | Glob patterns matched against `org/project`. |
+| `exclude` | Glob patterns matched against `org/project`, using the bare org name (`acme/widgets`), not the qualified one shown on tiles. |
 | `orgs` | CircleCI org slugs, e.g. `gh/vibrant-wozniak`. `bb/` for Bitbucket. |
 
 `branch_filter: default` is the classic build-monitor semantic — it
@@ -117,6 +117,15 @@ the board rather than filtered out, with branch shown as `?`.
     launchctl load ~/Library/LaunchAgents/io.willowworks.build-monitor.plist
 
 Logs land in `/tmp/build-monitor.{log,err}`.
+
+## Tests
+
+    go test ./...
+
+The rollup logic is the part worth trusting, so that is where the tests
+are: status mapping, severity ordering, the errored-pipeline case, the
+approval-hold duration correction, branch filtering and config
+validation. They are pure functions and touch no network.
 
 ## License
 
