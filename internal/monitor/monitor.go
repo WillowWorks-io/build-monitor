@@ -312,6 +312,12 @@ func (m *Monitor) pollOrg(ctx context.Context, org string) ([]Project, error) {
 func tile(org, name string, p circleci.Pipeline, wfs []circleci.Workflow) Project {
 	ga := p.TriggerParameters.GitHubApp
 
+	// Re-running a workflow adds a second record under the same name
+	// rather than replacing the first. Rolling up across both means a
+	// re-run that fixed the build can never turn the tile green again,
+	// and the board stays redder than reality forever.
+	wfs = latestPerName(wfs)
+
 	status := StatusUnknown
 	var finished, started, runningSince time.Time
 	var runningName string
@@ -381,6 +387,30 @@ func tile(org, name string, p circleci.Pipeline, wfs []circleci.Workflow) Projec
 		runningSince:    runningSince,
 		workflowIDs:     ids,
 	}
+}
+
+// latestPerName keeps only the most recent run of each workflow name,
+// which is what a re-run supersedes. Order is preserved so the tile's
+// workflow list still reads the way the pipeline is written.
+func latestPerName(wfs []circleci.Workflow) []circleci.Workflow {
+	newest := make(map[string]circleci.Workflow, len(wfs))
+	var order []string
+	for _, w := range wfs {
+		prev, seen := newest[w.Name]
+		if !seen {
+			order = append(order, w.Name)
+			newest[w.Name] = w
+			continue
+		}
+		if w.CreatedAt.After(prev.CreatedAt) {
+			newest[w.Name] = w
+		}
+	}
+	out := make([]circleci.Workflow, 0, len(order))
+	for _, n := range order {
+		out = append(out, newest[n])
+	}
+	return out
 }
 
 // projectName pulls "repo" out of a "gh/org/repo" project slug.

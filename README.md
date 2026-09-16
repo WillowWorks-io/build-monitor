@@ -123,6 +123,12 @@ A project's tile shows the **worst** status across the workflows of its
 latest pipeline, so one failed workflow colours the tile red even when
 its siblings pass.
 
+Re-running a workflow adds a second record under the same name rather
+than replacing the first, so only the most recent run of each name
+counts. Without that, a re-run that fixed the build could never turn the
+tile green again. The reverse holds too: a re-run that fails is current,
+and an earlier success does not mask it.
+
 | CircleCI | Tile |
 | --- | --- |
 | `success` | passed |

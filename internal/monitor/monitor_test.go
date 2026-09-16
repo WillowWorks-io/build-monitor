@@ -255,3 +255,52 @@ func TestQualifiedOrg(t *testing.T) {
 		}
 	}
 }
+
+// Re-running a workflow in CircleCI adds a second record under the same
+// name rather than replacing the first. Reproduces the real pipeline
+// that exposed this: a prod workflow that failed, was re-run, and
+// succeeded -- which the board kept showing as red.
+func TestRerunSupersedesTheFailedAttempt(t *testing.T) {
+	p := pipeline(12, "main", "main")
+	got := tile("acme", "widgets", p, []circleci.Workflow{
+		{Name: "prod", Status: "failed", CreatedAt: ts("2026-09-16T15:48:12Z"), StoppedAt: ptr(ts("2026-09-16T16:18:32Z"))},
+		{Name: "prod", Status: "success", CreatedAt: ts("2026-09-16T18:23:04Z"), StoppedAt: ptr(ts("2026-09-16T18:28:15Z"))},
+	})
+
+	if got.Status != StatusPassed {
+		t.Errorf("a successful re-run should clear the tile: got %q", got.Status)
+	}
+	if len(got.Workflows) != 1 {
+		t.Errorf("the superseded attempt should not be listed twice: %v", got.Workflows)
+	}
+}
+
+func TestRerunThatFailsAgainStaysRed(t *testing.T) {
+	// The reverse must hold too: a re-run that fails again is current,
+	// and an earlier success must not mask it.
+	p := pipeline(13, "main", "main")
+	got := tile("acme", "widgets", p, []circleci.Workflow{
+		{Name: "app", Status: "success", CreatedAt: ts("2026-09-16T10:00:00Z"), StoppedAt: ptr(ts("2026-09-16T10:04:00Z"))},
+		{Name: "app", Status: "failed", CreatedAt: ts("2026-09-16T12:00:00Z"), StoppedAt: ptr(ts("2026-09-16T12:03:00Z"))},
+	})
+	if got.Status != StatusFailed {
+		t.Errorf("the latest attempt failed, so the tile is red: got %q", got.Status)
+	}
+}
+
+func TestRerunDoesNotDisturbDistinctWorkflows(t *testing.T) {
+	// Collapsing by name must not merge workflows that are genuinely
+	// different; worst-wins still applies across them.
+	p := pipeline(14, "main", "main")
+	got := tile("acme", "widgets", p, []circleci.Workflow{
+		{Name: "setup", Status: "success", CreatedAt: ts("2026-09-16T10:00:00Z"), StoppedAt: ptr(ts("2026-09-16T10:00:30Z"))},
+		{Name: "app", Status: "failed", CreatedAt: ts("2026-09-16T10:00:30Z"), StoppedAt: ptr(ts("2026-09-16T10:04:00Z"))},
+		{Name: "app", Status: "success", CreatedAt: ts("2026-09-16T11:00:00Z"), StoppedAt: ptr(ts("2026-09-16T11:04:00Z"))},
+	})
+	if got.Status != StatusPassed {
+		t.Errorf("setup passed and app's re-run passed: got %q", got.Status)
+	}
+	if len(got.Workflows) != 2 {
+		t.Errorf("expected setup and app, got %v", got.Workflows)
+	}
+}

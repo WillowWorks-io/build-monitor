@@ -41,6 +41,13 @@ project and is cached for `durationTTL`, since medians move slowly.
 for projects that are currently red, so that cost scales with breakage
 rather than fleet size.
 
+**A re-run does not replace the workflow it re-runs.** CircleCI returns
+both records under the same name, so `tile()` calls `latestPerName()`
+before rolling up. Skip that and a fixed build stays red until the next
+push. Whatever replaces it must keep working in both directions: a
+successful re-run clears the tile, and a failed re-run is not masked by
+the earlier success.
+
 **Statuses roll up by worst-wins.** See `severity()` in
 `internal/monitor`. Adding a status means placing it in that ordering,
 not just mapping it.
