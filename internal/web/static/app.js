@@ -16,6 +16,25 @@ const errors = document.getElementById("errors");
 let lastBoard = null;
 let consecutiveFailures = 0;
 
+// A glyph per state, so the board never depends on hue alone. Roughly
+// one man in twelve cannot separate the red and green reliably, and a
+// radiator is read by whoever walks past it.
+const GLYPH = {
+  passed: "\u2713",
+  failed: "\u2715",
+  on_hold: "\u23f8",
+  unknown: "?",
+};
+
+function dur(secs) {
+  if (!secs || secs < 0) return "";
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  if (m < 60) return s ? `${m}m${String(s).padStart(2, "0")}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+}
+
 function ago(iso) {
   if (!iso) return "";
   const then = new Date(iso).getTime();
@@ -98,15 +117,51 @@ function render(data) {
 
     const age = document.createElement("div");
     age.className = "tile-age";
-    age.textContent = p.status === "running" ? "running" : ago(p.finished_at);
+    if (p.status === "running") {
+      age.textContent = p.eta_seconds ? `~${dur(p.eta_seconds)} left` : "running";
+    } else {
+      const d = dur(p.duration_seconds);
+      age.textContent = d ? `${d} \u00b7 ${ago(p.finished_at)}` : ago(p.finished_at);
+    }
 
     foot.append(commit, age);
-    a.append(org, name, foot);
+    a.append(org, name);
+
+    // How long it has been red matters more than that it is red: "just
+    // broke" and "broken for a month" want different reactions.
+    if (p.status === "failed" && p.broken_since) {
+      const broken = document.createElement("div");
+      broken.className = "broken";
+      const span = ago(p.broken_since);
+      broken.textContent = p.broken_builds > 1
+        ? `broken ${span} \u00b7 ${p.broken_builds} builds`
+        : `broken ${span}`;
+      a.append(broken);
+    }
+
+    a.append(foot);
 
     if (p.status === "running") {
       const spin = document.createElement("div");
       spin.className = "spinner";
       a.append(spin);
+
+      // Elapsed against this workflow's median duration. A spinner says
+      // something is happening; a bar says how much longer.
+      if (p.progress > 0) {
+        const bar = document.createElement("div");
+        bar.className = "progress";
+        const fill = document.createElement("div");
+        fill.className = "progress-fill";
+        fill.style.width = `${Math.round(p.progress * 100)}%`;
+        bar.append(fill);
+        a.append(bar);
+      }
+    } else {
+      const g = document.createElement("div");
+      g.className = "glyph";
+      g.textContent = GLYPH[p.status] || "";
+      a.append(g);
     }
     return a;
   }));
@@ -157,6 +212,24 @@ async function poll() {
   }
   paintFreshness();
 }
+
+// Kiosk shortcuts: a radiator lives fullscreen on a spare display, where
+// browser chrome is just wasted pixels.
+addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "f") {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  } else if (k === "h") {
+    document.body.classList.toggle("no-header");
+    if (lastBoard) render(lastBoard);
+  } else if (k === "?" || k === "/") {
+    document.getElementById("help").hidden = !document.getElementById("help").hidden;
+  } else if (k === "escape") {
+    document.getElementById("help").hidden = true;
+  }
+});
 
 let resizeTimer;
 addEventListener("resize", () => {

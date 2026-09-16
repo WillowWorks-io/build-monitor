@@ -4,6 +4,7 @@ package monitor
 import (
 	"context"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -74,7 +75,32 @@ type Project struct {
 	FinishedAt  time.Time `json:"finished_at"`
 	URL         string    `json:"url"`
 	Workflows   []string  `json:"workflows"`
+
+	// DurationSeconds is how long the latest finished run took.
+	DurationSeconds int `json:"duration_seconds"`
+	// Progress is 0..1 for a running build, estimated from the median
+	// duration of that workflow. Zero when there is no basis to estimate.
+	Progress float64 `json:"progress"`
+	// ETASeconds is the estimated remaining time for a running build.
+	ETASeconds int `json:"eta_seconds"`
+	// BrokenSince is when this project last went red, and BrokenBuilds
+	// how many consecutive runs have failed. A radiator that shows only
+	// the latest result cannot distinguish "just broke" from "broken for
+	// a month", which is the difference between noise and an emergency.
+	BrokenSince  time.Time `json:"broken_since"`
+	BrokenBuilds int       `json:"broken_builds"`
+
+	// Internal, for the enrichment pass; not part of the feed.
+	slug         string
+	runningName  string
+	runningSince time.Time
+	workflowIDs  []string
 }
+
+// heldDurationThreshold is the wall-clock duration past which a run is
+// assumed to have been parked on an approval gate rather than genuinely
+// running that long, and its real build time is recomputed from jobs.
+const heldDurationThreshold = 20 * time.Minute
 
 // Board is the whole radiator at a moment in time.
 type Board struct {
@@ -98,7 +124,16 @@ type Monitor struct {
 
 	mu    sync.RWMutex
 	board Board
+
+	// Median workflow durations change slowly, so they are cached well
+	// past the poll interval rather than refetched every cycle.
+	durMu    sync.RWMutex
+	durCache map[string]map[string]int
+	durFetch time.Time
 }
+
+// durationTTL is how long cached median durations stay fresh.
+const durationTTL = 10 * time.Minute
 
 // New builds a Monitor.
 func New(cfg *config.Config, client *circleci.Client, log *slog.Logger) *Monitor {
@@ -109,7 +144,8 @@ func New(cfg *config.Config, client *circleci.Client, log *slog.Logger) *Monitor
 		// Empty rather than nil: the feed always presents projects and
 		// errors as JSON arrays, so a client never has to tell an empty
 		// board apart from a null one.
-		board: Board{Projects: []Project{}, Errors: []string{}},
+		board:    Board{Projects: []Project{}, Errors: []string{}},
+		durCache: map[string]map[string]int{},
 	}
 }
 
@@ -162,6 +198,8 @@ func (m *Monitor) refresh(ctx context.Context) {
 		}(org)
 	}
 	wg.Wait()
+
+	projects = m.enrich(ctx, projects)
 
 	// Failures first, then oldest-finished first: whatever needs a human
 	// rises to the top-left, where the eye lands.
@@ -270,16 +308,32 @@ func tile(org, name string, p circleci.Pipeline, wfs []circleci.Workflow) Projec
 	ga := p.TriggerParameters.GitHubApp
 
 	status := StatusUnknown
-	var finished time.Time
+	var finished, started, runningSince time.Time
+	var runningName string
 	names := make([]string, 0, len(wfs))
+	ids := make([]string, 0, len(wfs))
 	for _, w := range wfs {
 		names = append(names, w.Name)
+		ids = append(ids, w.ID)
 		if s := fromWorkflow(w.Status); severity(s) > severity(status) {
 			status = s
 		}
 		if w.StoppedAt != nil && w.StoppedAt.After(finished) {
 			finished = *w.StoppedAt
 		}
+		if started.IsZero() || w.CreatedAt.Before(started) {
+			started = w.CreatedAt
+		}
+		if w.Status == "running" {
+			runningName = w.Name
+			runningSince = w.CreatedAt
+		}
+	}
+
+	// How long the latest finished run took, end to end across workflows.
+	var durSecs int
+	if !finished.IsZero() && !started.IsZero() && finished.After(started) {
+		durSecs = int(finished.Sub(started).Seconds())
 	}
 	if finished.IsZero() {
 		finished = p.CreatedAt
@@ -304,18 +358,23 @@ func tile(org, name string, p circleci.Pipeline, wfs []circleci.Workflow) Projec
 	}
 
 	return Project{
-		Org:         org,
-		Name:        name,
-		Status:      status,
-		Pipeline:    p.Number,
-		Branch:      p.Branch(),
-		SHA:         sha,
-		CommitTitle: ga.CommitTitle,
-		Actor:       p.Actor(),
-		Detail:      detail,
-		FinishedAt:  finished,
-		URL:         "https://app.circleci.com/pipelines/" + p.ProjectSlug + "/" + itoa(p.Number),
-		Workflows:   names,
+		Org:             org,
+		Name:            name,
+		Status:          status,
+		Pipeline:        p.Number,
+		Branch:          p.Branch(),
+		SHA:             sha,
+		CommitTitle:     ga.CommitTitle,
+		Actor:           p.Actor(),
+		Detail:          detail,
+		FinishedAt:      finished,
+		URL:             "https://app.circleci.com/pipelines/" + p.ProjectSlug + "/" + itoa(p.Number),
+		Workflows:       names,
+		DurationSeconds: durSecs,
+		slug:            p.ProjectSlug,
+		runningName:     runningName,
+		runningSince:    runningSince,
+		workflowIDs:     ids,
 	}
 }
 
@@ -347,4 +406,147 @@ type errWorkflows struct {
 
 func (e errWorkflows) Error() string {
 	return e.org + ": " + strings.Join(e.msgs, "; ")
+}
+
+// medianDurations returns median seconds per workflow for a project,
+// refetching only when the cache has gone stale. Medians move slowly, so
+// paying for them every poll would be waste.
+func (m *Monitor) medianDurations(ctx context.Context, slug, branch string) map[string]int {
+	m.durMu.RLock()
+	fresh := time.Since(m.durFetch) < durationTTL
+	cached, ok := m.durCache[slug]
+	m.durMu.RUnlock()
+	if fresh && ok {
+		return cached
+	}
+
+	wfs, err := m.client.InsightsWorkflows(ctx, slug, branch)
+	if err != nil {
+		// Insights is an enhancement, not a dependency: a project with no
+		// history yet simply gets no progress bar.
+		return cached
+	}
+
+	out := map[string]int{}
+	for _, w := range wfs {
+		if d := w.Metrics.DurationMetrics.Median; d > 0 {
+			out[w.Name] = d
+		}
+	}
+
+	m.durMu.Lock()
+	m.durCache[slug] = out
+	m.durFetch = time.Now()
+	m.durMu.Unlock()
+	return out
+}
+
+// failureStreak reports how many consecutive runs have failed and when
+// the run of failures began.
+func (m *Monitor) failureStreak(ctx context.Context, slug, workflow, branch string) (int, time.Time) {
+	runs, err := m.client.InsightsWorkflowRuns(ctx, slug, workflow, branch, 30)
+	if err != nil || len(runs) == 0 {
+		return 0, time.Time{}
+	}
+
+	count := 0
+	since := time.Time{}
+	for _, r := range runs { // newest first
+		if r.Status == "success" {
+			break
+		}
+		count++
+		since = r.CreatedAt // keeps walking back to the oldest in the run
+	}
+	return count, since
+}
+
+// enrich adds progress estimates and breakage history to the board.
+// Duration lookups are per project; streak lookups happen only for
+// projects that are actually red, so the cost scales with breakage
+// rather than with fleet size.
+func (m *Monitor) enrich(ctx context.Context, projects []Project) []Project {
+	branch := ""
+	if m.cfg.BranchFilter == config.BranchDefault {
+		branch = "main"
+	}
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 6)
+
+	for i := range projects {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			p := &projects[i]
+
+			if p.Status == StatusRunning && p.runningName != "" && !p.runningSince.IsZero() {
+				medians := m.medianDurations(ctx, p.slug, branch)
+				if med, ok := medians[p.runningName]; ok && med > 0 {
+					elapsed := time.Since(p.runningSince).Seconds()
+					// Cap just short of complete: a build that overruns its
+					// median is still running, and a full bar would read as
+					// finished.
+					p.Progress = math.Min(elapsed/float64(med), 0.99)
+					if eta := med - int(elapsed); eta > 0 {
+						p.ETASeconds = eta
+					}
+				}
+			}
+
+			// Wall clock counts time parked on an approval gate, which is a
+			// human deciding, not a build running. Left alone, a pipeline
+			// someone approved the next morning reports as a seven-hour
+			// build. Recomputed from jobs only when the number is already
+			// implausible, so the common case costs nothing.
+			if time.Duration(p.DurationSeconds)*time.Second > heldDurationThreshold {
+				if secs, ok := m.buildSeconds(ctx, p.workflowIDs); ok {
+					p.DurationSeconds = secs
+				}
+			}
+
+			if p.Status == StatusFailed {
+				if p.runningName == "" && len(p.Workflows) > 0 {
+					// Use whichever workflow the tile rolled up from.
+					n, since := m.failureStreak(ctx, p.slug, p.Workflows[0], branch)
+					p.BrokenBuilds, p.BrokenSince = n, since
+				}
+				if p.BrokenSince.IsZero() {
+					// A pipeline that errored produced no workflow to ask
+					// about, so fall back to when it happened.
+					p.BrokenSince = p.FinishedAt
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	return projects
+}
+
+// buildSeconds sums the time a run's jobs actually spent running,
+// excluding approval gates -- and lock/unlock jobs, which serialise
+// deploys and are likewise waiting rather than working.
+func (m *Monitor) buildSeconds(ctx context.Context, workflowIDs []string) (int, bool) {
+	total := 0
+	any := false
+	for _, id := range workflowIDs {
+		jobs, err := m.client.ListWorkflowJobs(ctx, id)
+		if err != nil {
+			return 0, false
+		}
+		for _, j := range jobs {
+			switch j.Type {
+			case "approval", "lock", "unlock":
+				continue
+			}
+			if secs := j.RunSeconds(); secs > 0 {
+				total += secs
+				any = true
+			}
+		}
+	}
+	return total, any
 }

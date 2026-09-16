@@ -211,6 +211,59 @@ body {
 
 .tile-age { white-space: nowrap; flex: 0 0 auto; }
 
+/* A status glyph so the board survives greyscale and red-green colour
+   blindness -- colour alone is never the only carrier. */
+.glyph {
+  position: absolute;
+  top: clamp(8px, 1vw, 18px);
+  right: clamp(10px, 1.1vw, 20px);
+  font-size: clamp(15px, 1.8vw, 32px);
+  line-height: 1;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.broken {
+  align-self: flex-start;
+  font-size: clamp(10px, 0.95vw, 16px);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.15em 0.55em;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.32);
+  white-space: nowrap;
+}
+
+/* Elapsed against the workflow's median duration. */
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: clamp(4px, 0.45vw, 8px);
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 2;
+}
+
+.progress-fill {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.85);
+  transition: width 0.6s ease-out;
+}
+
+/* Concourse hatches paused pipelines rather than only recolouring them:
+   texture reads as "deliberately not running" in a way hue cannot. */
+.tile.on_hold {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.16) 0,
+    rgba(0, 0, 0, 0.16) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+}
+
 .tile-branch {
   display: inline-block;
   padding: 0.1em 0.5em;
@@ -249,9 +302,41 @@ body {
 
 .errors p { margin: 0.2em 0; }
 
+/* Kiosk mode: the header is chrome a wall display does not need. */
+body.no-header #bar { display: none; }
+
+.help {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  background: rgba(11, 14, 19, 0.92);
+  z-index: 10;
+}
+
+.help dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.6em 1.4em;
+  align-items: baseline;
+  font-size: clamp(14px, 1.3vw, 22px);
+  margin: 0;
+}
+
+.help dt {
+  justify-self: end;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 0.12em 0.5em;
+}
+
+.help dd { margin: 0; color: var(--dim); }
+
 @media (prefers-reduced-motion: reduce) {
   .tile.running::after { animation: none; opacity: 0.4; }
   /* Still a ring, just not a turning one -- the gap keeps it legible as
      "in progress" rather than reading as a plain circle. */
   .spinner { animation: none; }
+  .progress-fill { transition: none; }
 }

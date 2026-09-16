@@ -168,3 +168,97 @@ func (c *Client) get(ctx context.Context, u string, out any) error {
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
+
+// WorkflowMetrics summarises how a named workflow has behaved recently.
+type WorkflowMetrics struct {
+	Name    string `json:"name"`
+	Metrics struct {
+		TotalRuns       int     `json:"total_runs"`
+		SuccessRate     float64 `json:"success_rate"`
+		DurationMetrics struct {
+			Median int `json:"median"`
+			P95    int `json:"p95"`
+		} `json:"duration_metrics"`
+	} `json:"metrics"`
+}
+
+// WorkflowRun is one past run of a workflow, newest first.
+type WorkflowRun struct {
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	Duration  int       `json:"duration"`
+	CreatedAt time.Time `json:"created_at"`
+	StoppedAt time.Time `json:"stopped_at"`
+}
+
+type insightsWorkflowsPage struct {
+	Items []WorkflowMetrics `json:"items"`
+}
+
+type insightsRunsPage struct {
+	Items []WorkflowRun `json:"items"`
+}
+
+// InsightsWorkflows returns per-workflow metrics for a project. One call
+// yields the median duration of every workflow, which is what turns a
+// running build's elapsed time into a progress estimate.
+func (c *Client) InsightsWorkflows(ctx context.Context, projectSlug, branch string) ([]WorkflowMetrics, error) {
+	u := fmt.Sprintf("%s/insights/%s/workflows", baseURL, projectSlug)
+	if branch != "" {
+		u += "?branch=" + url.QueryEscape(branch)
+	}
+	var page insightsWorkflowsPage
+	if err := c.get(ctx, u, &page); err != nil {
+		return nil, fmt.Errorf("insights workflows for %s: %w", projectSlug, err)
+	}
+	return page.Items, nil
+}
+
+// InsightsWorkflowRuns returns recent runs of one workflow, newest first.
+// Only fetched for projects that are currently red, to size the failure
+// streak -- so the cost scales with breakage, not with fleet size.
+func (c *Client) InsightsWorkflowRuns(ctx context.Context, projectSlug, workflow, branch string, limit int) ([]WorkflowRun, error) {
+	u := fmt.Sprintf("%s/insights/%s/workflows/%s?limit=%d",
+		baseURL, projectSlug, url.PathEscape(workflow), limit)
+	if branch != "" {
+		u += "&branch=" + url.QueryEscape(branch)
+	}
+	var page insightsRunsPage
+	if err := c.get(ctx, u, &page); err != nil {
+		return nil, fmt.Errorf("insights runs for %s/%s: %w", projectSlug, workflow, err)
+	}
+	return page.Items, nil
+}
+
+// Job is one job within a workflow.
+type Job struct {
+	Name      string     `json:"name"`
+	Type      string     `json:"type"`
+	Status    string     `json:"status"`
+	StartedAt *time.Time `json:"started_at"`
+	StoppedAt *time.Time `json:"stopped_at"`
+}
+
+type jobPage struct {
+	Items []Job `json:"items"`
+}
+
+// ListWorkflowJobs returns the jobs of a workflow. Only needed to tell
+// build time apart from time a workflow spent parked on an approval
+// gate, so it is fetched lazily rather than on every poll.
+func (c *Client) ListWorkflowJobs(ctx context.Context, workflowID string) ([]Job, error) {
+	u := fmt.Sprintf("%s/workflow/%s/job", baseURL, url.PathEscape(workflowID))
+	var page jobPage
+	if err := c.get(ctx, u, &page); err != nil {
+		return nil, fmt.Errorf("list jobs for %s: %w", workflowID, err)
+	}
+	return page.Items, nil
+}
+
+// RunSeconds reports how long the job actually ran.
+func (j Job) RunSeconds() int {
+	if j.StartedAt == nil || j.StoppedAt == nil {
+		return 0
+	}
+	return int(j.StoppedAt.Sub(*j.StartedAt).Seconds())
+}

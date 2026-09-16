@@ -26,6 +26,21 @@ populated, but `/workflow` returns an empty list. Rolling up only
 workflow status paints these grey, which on a radiator reads as "no
 news" rather than "broken". `Pipeline.Errored()` exists for this.
 
+**Wall-clock duration counts approval waits.** A workflow parked on a
+manual `approve` job is not running, but the timestamps say it is -- one
+real pipeline here reported 7.2 hours, of which 25,519 of 25,996 seconds
+were the approval gate. `buildSeconds()` recomputes from job times when
+wall clock exceeds `heldDurationThreshold`, skipping `approval`, `lock`
+and `unlock` job types. It is lazy on purpose: the extra requests happen
+only for runs whose number is already implausible.
+
+**Insights endpoints back the progress bar and the broken-for counter.**
+`/insights/{slug}/workflows` gives median durations in one call per
+project and is cached for `durationTTL`, since medians move slowly.
+`/insights/{slug}/workflows/{name}` gives run history and is fetched only
+for projects that are currently red, so that cost scales with breakage
+rather than fleet size.
+
 **Statuses roll up by worst-wins.** See `severity()` in
 `internal/monitor`. Adding a status means placing it in that ordering,
 not just mapping it.

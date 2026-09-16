@@ -41,6 +41,27 @@ Open <http://127.0.0.1:8770>.
 answers "is trunk green?" without feature-branch noise. Switch it to
 `"*"` to mirror what the CircleCI web UI shows.
 
+## On the board
+
+Each tile carries more than a colour:
+
+| | |
+| --- | --- |
+| Status glyph | A mark per state, so the board is readable in greyscale and to red-green colour blindness. Colour is never the only carrier. |
+| Progress bar | Running builds show elapsed against that workflow's median duration, with an ETA. A spinner says something is happening; a bar says how much longer. |
+| Broken for | Red tiles show how long they have been red and over how many builds. "Just broke" and "broken for a month" deserve different reactions. |
+| Duration | How long the last run actually took, so a suite getting slower is visible. |
+| Hatching | On-hold tiles are striped as well as recoloured, after Concourse -- texture reads as "deliberately not running". |
+
+### Keyboard
+
+| Key | |
+| --- | --- |
+| `f` | Fullscreen |
+| `h` | Hide the header |
+| `?` | Shortcuts |
+| `esc` | Close |
+
 ## Status mapping
 
 A project's tile shows the **worst** status across the workflows of its
@@ -54,6 +75,13 @@ its siblings pass.
 | `running` | running |
 | `on_hold` | on hold |
 | `canceled`, `not_run` | unknown (grey) |
+
+Reported durations exclude time a run spent parked on an approval gate.
+Wall clock counts a human deciding as though it were a build running, so
+a pipeline approved the next morning reports as a seven-hour build. When
+wall clock exceeds 20 minutes the duration is recomputed from job times,
+skipping `approval`, `lock` and `unlock` jobs; below that threshold the
+cheap number is used and no extra requests are made.
 
 A pipeline whose `state` is `errored`, or that carries entries in
 `errors`, is reported as **failed** with the reason on the tile. Such a
