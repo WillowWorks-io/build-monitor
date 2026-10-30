@@ -205,7 +205,7 @@ func (m *Monitor) refresh(ctx context.Context) {
 	}
 	wg.Wait()
 
-	projects = m.enrich(ctx, projects)
+	projects = m.enrich(ctx, projects, followed)
 
 	// Failures first, then oldest-finished first: whatever needs a human
 	// rises to the top-left, where the eye lands.
@@ -568,10 +568,10 @@ func (m *Monitor) failureStreak(ctx context.Context, slug, workflow, branch stri
 // Duration lookups are per project; streak lookups happen only for
 // projects that are actually red, so the cost scales with breakage
 // rather than with fleet size.
-func (m *Monitor) enrich(ctx context.Context, projects []Project) []Project {
-	branch := ""
-	if m.cfg.BranchFilter == config.BranchDefault {
-		branch = "main"
+func (m *Monitor) enrich(ctx context.Context, projects []Project, followed []circleci.FollowedProject) []Project {
+	defaults := make(map[string]string, len(followed))
+	for _, f := range followed {
+		defaults[strings.ToLower(f.Slug())] = f.DefaultBranch
 	}
 
 	var wg sync.WaitGroup
@@ -585,6 +585,7 @@ func (m *Monitor) enrich(ctx context.Context, projects []Project) []Project {
 			defer func() { <-sem }()
 
 			p := &projects[i]
+			branch := m.insightsBranch(*p, defaults)
 
 			if p.Status == StatusRunning && p.runningName != "" && !p.runningSince.IsZero() {
 				medians := m.medianDurations(ctx, p.slug, branch)
@@ -627,6 +628,20 @@ func (m *Monitor) enrich(ctx context.Context, projects []Project) []Project {
 	}
 	wg.Wait()
 	return projects
+}
+
+// insightsBranch picks the branch to read a project's history from, or ""
+// for all of them. The followed list comes first because legacy-trigger
+// pipelines carry no branch of their own; an unfollowed project falls back
+// to the branch its tile shows, which the filter has already vetted.
+func (m *Monitor) insightsBranch(p Project, defaults map[string]string) string {
+	if m.cfg.BranchFilter != config.BranchDefault {
+		return ""
+	}
+	if b := defaults[strings.ToLower(p.slug)]; b != "" {
+		return b
+	}
+	return p.Branch
 }
 
 // buildSeconds sums the time a run's jobs actually spent running,

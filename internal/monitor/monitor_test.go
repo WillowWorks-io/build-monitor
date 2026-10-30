@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/willowworks-io/build-monitor/internal/circleci"
+	"github.com/willowworks-io/build-monitor/internal/config"
 )
 
 func TestFromWorkflow(t *testing.T) {
@@ -328,5 +329,33 @@ func TestUnseenFollowed(t *testing.T) {
 
 	if got := unseenFollowed("gh/acme", nil, seen); len(got) != 0 {
 		t.Errorf("unseenFollowed with no followed list = %+v, want none", got)
+	}
+}
+
+func TestInsightsBranch(t *testing.T) {
+	defaults := map[string]string{"gh/acme/legacy": "master"}
+	trunk := &Monitor{cfg: &config.Config{BranchFilter: config.BranchDefault}}
+	cases := []struct {
+		name string
+		p    Project
+		want string
+	}{
+		{"default branch not named main", Project{slug: "gh/acme/other", Branch: "master"}, "master"},
+		// Legacy triggers report no branch, so only the followed list
+		// knows; guessing would read an empty history.
+		{"legacy trigger", Project{slug: "gh/Acme/legacy"}, "master"},
+		{"unfollowed legacy trigger", Project{slug: "gh/acme/other"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := trunk.insightsBranch(c.p, defaults); got != c.want {
+				t.Errorf("insightsBranch() = %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	all := &Monitor{cfg: &config.Config{BranchFilter: config.BranchAll}}
+	if got := all.insightsBranch(Project{slug: "gh/acme/legacy", Branch: "topic"}, defaults); got != "" {
+		t.Errorf("insightsBranch() with every branch watched = %q, want none", got)
 	}
 }
