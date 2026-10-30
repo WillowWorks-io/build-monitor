@@ -73,7 +73,7 @@ than hidden in the log, so most of these announce themselves.
 | `circleci rejected the token` | The token is wrong, revoked, or the file holds something other than the token. |
 | `read token: no such file` at startup | `token_file` points somewhere that does not exist. The server refuses to start rather than polling unauthenticated. |
 | Empty board, no errors | The orgs are reachable but have no pipelines the filter admits. Try `branch_filter: "*"`. |
-| A project you expected is missing | It has never run a pipeline. A radiator can only show builds that exist. |
+| A project you expected is missing | It has never run a pipeline, or you do not follow it. Every followed project with a pipeline appears; one you do not follow appears only while it is in the org's recent runs. |
 | Fewer projects than you expected | `branch_filter: default` hides runs that were not on the repo's default branch. Set it to `"*"` to see everything. |
 
 ### Configuration
@@ -85,7 +85,7 @@ than hidden in the log, so most of these announce themselves.
 | `poll_interval` | How often to poll CircleCI. Floor of 15s. |
 | `branch_filter` | `default` watches each repo's default branch; `*` watches every branch, like CircleCI's "All" tab. |
 | `exclude` | Glob patterns matched against `org/project`, using the bare org name (`acme/widgets`), not the qualified one shown on tiles. |
-| `orgs` | CircleCI org slugs, e.g. `gh/vibrant-wozniak`. `bb/` for Bitbucket. |
+| `orgs` | CircleCI org slugs, e.g. `gh/vibrant-wozniak`. `bb/` for Bitbucket. Followed projects outside these orgs are not shown. |
 
 `branch_filter: default` is the classic build-monitor semantic — it
 answers "is trunk green?" without feature-branch noise. Switch it to
@@ -157,6 +157,11 @@ projects. Branch, SHA and commit metadata live under
 `trigger_parameters.github_app` instead. Projects still on older webhook
 triggers return an empty `trigger_parameters` entirely; they are kept on
 the board rather than filtered out, with branch shown as `?`.
+
+The org pipeline feed is **one page shared by every project in the org**,
+so a few busy repos can fill it. Each poll therefore also reads the
+followed list from the v1.1 `/projects` endpoint, which v2 has no
+equivalent for, and asks each followed project the feed missed directly.
 
 ## Endpoints
 

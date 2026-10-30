@@ -304,3 +304,29 @@ func TestRerunDoesNotDisturbDistinctWorkflows(t *testing.T) {
 		t.Errorf("expected setup and app, got %v", got.Workflows)
 	}
 }
+
+func TestUnseenFollowed(t *testing.T) {
+	followed := []circleci.FollowedProject{
+		{VCSType: "github", Username: "acme", Reponame: "busy"},
+		{VCSType: "github", Username: "acme", Reponame: "Quiet"},
+		{VCSType: "github", Username: "other", Reponame: "elsewhere"},
+	}
+
+	// "busy" filled the org feed and pushed "Quiet" off it. "elsewhere"
+	// is followed but belongs to an org this poll is not about.
+	seen := map[string]circleci.Pipeline{"busy": {}}
+	got := unseenFollowed("gh/acme", followed, seen)
+	if len(got) != 1 || got[0].Reponame != "Quiet" {
+		t.Errorf("unseenFollowed = %+v, want only Quiet", got)
+	}
+
+	// The feed and the followed list may disagree on case.
+	seen["quiet"] = circleci.Pipeline{}
+	if got := unseenFollowed("gh/acme", followed, seen); len(got) != 0 {
+		t.Errorf("unseenFollowed = %+v, want none once both are seen", got)
+	}
+
+	if got := unseenFollowed("gh/acme", nil, seen); len(got) != 0 {
+		t.Errorf("unseenFollowed with no followed list = %+v, want none", got)
+	}
+}

@@ -8,10 +8,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
-const baseURL = "https://circleci.com/api/v2"
+const (
+	baseURL = "https://circleci.com/api/v2"
+	// followedURL is v1.1 because v2 has no way to list followed projects.
+	followedURL = "https://circleci.com/api/v1.1/projects"
+)
 
 // Client talks to the CircleCI v2 API with a personal API token.
 type Client struct {
@@ -122,8 +127,9 @@ type workflowPage struct {
 }
 
 // ListPipelines returns the most recent page of pipelines for an org.
-// One page is deliberate: the radiator only ever shows each project's
-// latest run, and older pages cannot contain it.
+// The page is one feed across every project, so a few busy projects can
+// fill it and leave quieter ones out. It shows what ran recently, not
+// what exists: FollowedProjects and ProjectPipelines cover the rest.
 func (c *Client) ListPipelines(ctx context.Context, orgSlug string) ([]Pipeline, error) {
 	u := fmt.Sprintf("%s/pipeline?org-slug=%s", baseURL, url.QueryEscape(orgSlug))
 	var page pipelinePage
@@ -131,6 +137,69 @@ func (c *Client) ListPipelines(ctx context.Context, orgSlug string) ([]Pipeline,
 		return nil, fmt.Errorf("list pipelines for %s: %w", orgSlug, err)
 	}
 	return page.Items, nil
+}
+
+// ProjectPipelines returns the most recent page of pipelines for one
+// project, restricted to branch unless branch is empty.
+func (c *Client) ProjectPipelines(ctx context.Context, projectSlug, branch string) ([]Pipeline, error) {
+	u := fmt.Sprintf("%s/project/%s/pipeline", baseURL, projectSlug)
+	if branch != "" {
+		u += "?branch=" + url.QueryEscape(branch)
+	}
+	var page pipelinePage
+	if err := c.get(ctx, u, &page); err != nil {
+		return nil, fmt.Errorf("list pipelines for %s: %w", projectSlug, err)
+	}
+	return page.Items, nil
+}
+
+// FollowedProject is a project the token's user follows.
+type FollowedProject struct {
+	VCSType       string `json:"vcs_type"`
+	Username      string `json:"username"`
+	Reponame      string `json:"reponame"`
+	DefaultBranch string `json:"default_branch"`
+}
+
+// Slug returns the project's "gh/org/repo" slug.
+func (f FollowedProject) Slug() string {
+	return vcsPrefix(f.VCSType) + "/" + f.Username + "/" + f.Reponame
+}
+
+// InOrg reports whether the project belongs to an org slug such as
+// "gh/acme". GitHub treats org names case-insensitively, so the casing in
+// a config need not match CircleCI's.
+func (f FollowedProject) InOrg(orgSlug string) bool {
+	prefix, name, ok := strings.Cut(orgSlug, "/")
+	if !ok {
+		return false
+	}
+	want := vcsPrefix(f.VCSType)
+	return want != "" && want == vcsPrefix(prefix) && strings.EqualFold(f.Username, name)
+}
+
+// vcsPrefix normalises a VCS name to its slug prefix. Projects on
+// anything else, such as CircleCI's own "circleci" type, have slugs built
+// from opaque IDs and return "" rather than a slug that would 404.
+func vcsPrefix(vcs string) string {
+	switch vcs {
+	case "gh", "github":
+		return "gh"
+	case "bb", "bitbucket":
+		return "bb"
+	default:
+		return ""
+	}
+}
+
+// FollowedProjects lists every project the token's user follows, across
+// all orgs. It answers from one call, however many projects there are.
+func (c *Client) FollowedProjects(ctx context.Context) ([]FollowedProject, error) {
+	var projects []FollowedProject
+	if err := c.get(ctx, followedURL, &projects); err != nil {
+		return nil, fmt.Errorf("list followed projects: %w", err)
+	}
+	return projects, nil
 }
 
 // ListWorkflows returns the workflows belonging to a pipeline.

@@ -20,6 +20,14 @@ projects, branch/SHA/commit live under `trigger_parameters.github_app`.
 Older webhook-triggered projects return `trigger_parameters: {}` and have
 no branch at all — they are deliberately kept on the board, not filtered.
 
+**The org pipeline feed is not a project list.** `/pipeline?org-slug=` is
+one 20-item page across the whole org, so busy projects push quiet ones
+off it; one org here hid eight of eleven followed projects that way.
+`pollOrg` backfills from the followed list (`/api/v1.1/projects`, which
+also supplies the default branch) with per-project lookups. Keep the feed
+regardless: it is what reports a bad org slug and what shows projects
+nobody follows.
+
 **A pipeline can fail without producing any workflow.** When the config
 cannot be fetched or parsed, `state` is `errored` and `errors` is
 populated, but `/workflow` returns an empty list. Rolling up only

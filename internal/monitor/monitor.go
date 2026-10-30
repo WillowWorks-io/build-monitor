@@ -183,16 +183,22 @@ func (m *Monitor) refresh(ctx context.Context) {
 		wg       sync.WaitGroup
 	)
 
+	// Losing this list costs the backfill, not the board: the org feeds
+	// still work without it.
+	followed, err := m.client.FollowedProjects(ctx)
+	if err != nil {
+		errs = append(errs, err.Error())
+	}
+
 	for _, org := range m.cfg.Orgs {
 		wg.Add(1)
 		go func(org string) {
 			defer wg.Done()
-			ps, err := m.pollOrg(ctx, org)
+			ps, err := m.pollOrg(ctx, org, followed)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				errs = append(errs, err.Error())
-				return
 			}
 			projects = append(projects, ps...)
 		}(org)
@@ -241,8 +247,10 @@ func (m *Monitor) refresh(ctx context.Context) {
 		"took", time.Since(start).Round(time.Millisecond))
 }
 
-// pollOrg builds a tile per project in one org.
-func (m *Monitor) pollOrg(ctx context.Context, org string) ([]Project, error) {
+// pollOrg builds a tile per project in one org. Tiles it could build are
+// returned alongside any error, so one bad project costs that project
+// rather than the whole org.
+func (m *Monitor) pollOrg(ctx context.Context, org string, followed []circleci.FollowedProject) ([]Project, error) {
 	pipelines, err := m.client.ListPipelines(ctx, org)
 	if err != nil {
 		return nil, err
@@ -267,7 +275,7 @@ func (m *Monitor) pollOrg(ctx context.Context, org string) ([]Project, error) {
 		if name == "" || m.cfg.Excluded(orgName+"/"+name) {
 			continue
 		}
-		if m.cfg.BranchFilter == config.BranchDefault && !p.OnDefaultBranch() {
+		if !m.qualifies(p) {
 			continue
 		}
 		if _, seen := latest[name]; seen {
@@ -284,6 +292,43 @@ func (m *Monitor) pollOrg(ctx context.Context, org string) ([]Project, error) {
 		sem  = make(chan struct{}, 6)
 		errs []string
 	)
+
+	// The feed above is one page shared by the whole org, so a few busy
+	// projects can push the rest off it. Ask each followed project it
+	// missed directly, or that project vanishes from the board with
+	// nothing to say it has.
+	for _, f := range unseenFollowed(org, followed, latest) {
+		if m.cfg.Excluded(orgName + "/" + f.Reponame) {
+			continue
+		}
+		wg.Add(1)
+		go func(f circleci.FollowedProject) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			branch := ""
+			if m.cfg.BranchFilter == config.BranchDefault {
+				branch = f.DefaultBranch
+			}
+			ps, err := m.client.ProjectPipelines(ctx, f.Slug(), branch)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err.Error())
+				return
+			}
+			for _, p := range ps {
+				if m.qualifies(p) {
+					latest[f.Reponame] = p
+					order = append(order, f.Reponame)
+					break
+				}
+			}
+		}(f)
+	}
+	wg.Wait()
+
 	for _, name := range order {
 		wg.Add(1)
 		go func(name string, p circleci.Pipeline) {
@@ -303,10 +348,33 @@ func (m *Monitor) pollOrg(ctx context.Context, org string) ([]Project, error) {
 	}
 	wg.Wait()
 
-	if len(errs) > 0 && len(out) == 0 {
-		return nil, errWorkflows{org: org, msgs: errs}
+	if len(errs) > 0 {
+		return out, errWorkflows{org: org, msgs: errs}
 	}
 	return out, nil
+}
+
+// qualifies reports whether a pipeline may represent its project under
+// the configured branch filter.
+func (m *Monitor) qualifies(p circleci.Pipeline) bool {
+	return m.cfg.BranchFilter != config.BranchDefault || p.OnDefaultBranch()
+}
+
+// unseenFollowed returns the followed projects in org that have no
+// pipeline yet. Names compare case-insensitively because the feed and
+// the followed list come from different API versions.
+func unseenFollowed(org string, followed []circleci.FollowedProject, seen map[string]circleci.Pipeline) []circleci.FollowedProject {
+	have := make(map[string]bool, len(seen))
+	for name := range seen {
+		have[strings.ToLower(name)] = true
+	}
+	var out []circleci.FollowedProject
+	for _, f := range followed {
+		if f.InOrg(org) && !have[strings.ToLower(f.Reponame)] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func tile(org, name string, p circleci.Pipeline, wfs []circleci.Workflow) Project {

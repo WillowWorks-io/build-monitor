@@ -8,8 +8,9 @@ token_file: ~/.config/circleci/token
 # Address the radiator is served on.
 listen: 127.0.0.1:8770
 
-# How often to poll CircleCI. Each cycle costs roughly
-# (1 + projects) requests per org, so keep this at 30s or higher.
+# How often to poll CircleCI. Each cycle costs roughly (1 + projects)
+# requests per org, plus one for each followed project that has not run
+# recently, so keep this at 30s or higher.
 poll_interval: 60s
 
 # Which branches count. "*" shows the latest pipeline per project on any

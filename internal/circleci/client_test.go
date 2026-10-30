@@ -76,3 +76,42 @@ func TestActorPrefersCommitAuthor(t *testing.T) {
 		t.Errorf("Actor() = %q, want the commit author to win", got)
 	}
 }
+
+func TestFollowedProjectSlug(t *testing.T) {
+	cases := []struct {
+		vcs, want string
+	}{
+		{"github", "gh/acme/widgets"},
+		{"bitbucket", "bb/acme/widgets"},
+	}
+	for _, c := range cases {
+		f := FollowedProject{VCSType: c.vcs, Username: "acme", Reponame: "widgets"}
+		if got := f.Slug(); got != c.want {
+			t.Errorf("Slug() for %s = %q, want %q", c.vcs, got, c.want)
+		}
+	}
+}
+
+func TestFollowedProjectInOrg(t *testing.T) {
+	gh := FollowedProject{VCSType: "github", Username: "Acme", Reponame: "widgets"}
+	cases := map[string]bool{
+		"gh/Acme":     true,
+		"gh/acme":     true, // config casing need not match CircleCI's
+		"github/Acme": true,
+		"bb/Acme":     false,
+		"gh/Acme-IT":  false,
+		"Acme":        false,
+	}
+	for org, want := range cases {
+		if got := gh.InOrg(org); got != want {
+			t.Errorf("InOrg(%q) = %v, want %v", org, got, want)
+		}
+	}
+
+	// Native CircleCI projects have opaque slugs that cannot be built
+	// from these fields, so they must never match a configured org.
+	native := FollowedProject{VCSType: "circleci", Username: "Acme", Reponame: "widgets"}
+	if native.InOrg("circleci/Acme") {
+		t.Error("a circleci-type project should not match any org")
+	}
+}
